@@ -1,5 +1,8 @@
 import os
-import sqlite3
+# import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
 import requests
 import re
 import google.generativeai as genai
@@ -16,45 +19,51 @@ CORS(app)
 
 genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
 
-# Initialize Database
-def init_db():
-    conn = sqlite3.connect('reviews.db')
-    c = conn.cursor()
-    
-    # Reviews Table with all columns you're using
-    c.execute('''CREATE TABLE IF NOT EXISTS reviews
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 text TEXT,
-                 ip TEXT,
-                 user_agent TEXT,
-                 status TEXT,
-                 review_status TEXT,
-                 reason TEXT,
-                 confidence REAL,
-                 timestamp DATETIME,
-                 last_updated DATETIME)''')
-    
-    # Bot Detections Table
-    c.execute('''CREATE TABLE IF NOT EXISTS bot_detections
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 ip TEXT,
-                 user_agent TEXT,
-                 is_bot BOOLEAN,
-                 confidence REAL,
-                 details TEXT,
-                 timestamp DATETIME)''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS ip_activity
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 ip TEXT NOT NULL,
-                 timestamp DATETIME NOT NULL,
-                 user_agent TEXT,
-                 action TEXT)''')
-    
-    conn.commit()
-    conn.close()
+def get_db_connection():
+    return psycopg2.connect(os.getenv("DATABASE_URL"), cursor_factory=RealDictCursor)
 
-init_db()
+
+# Initialize Database
+# def init_db():
+#     # conn = sqlite3.connect('reviews.db')
+#     conn = get_db_connection()
+
+#     c = conn.cursor()
+    
+#     # Reviews Table with all columns you're using
+#     c.execute('''CREATE TABLE IF NOT EXISTS reviews
+#                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
+#                  text TEXT,
+#                  ip TEXT,
+#                  user_agent TEXT,
+#                  status TEXT,
+#                  review_status TEXT,
+#                  reason TEXT,
+#                  confidence REAL,
+#                  timestamp DATETIME,
+#                  last_updated DATETIME)''')
+    
+#     # Bot Detections Table
+#     c.execute('''CREATE TABLE IF NOT EXISTS bot_detections
+#                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
+#                  ip TEXT,
+#                  user_agent TEXT,
+#                  is_bot BOOLEAN,
+#                  confidence REAL,
+#                  details TEXT,
+#                  timestamp DATETIME)''')
+    
+#     c.execute('''CREATE TABLE IF NOT EXISTS ip_activity
+#                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
+#                  ip TEXT NOT NULL,
+#                  timestamp DATETIME NOT NULL,
+#                  user_agent TEXT,
+#                  action TEXT)''')
+    
+#     conn.commit()
+#     conn.close()
+
+# init_db()
 
 # --- Detection Services ---
 
@@ -285,32 +294,34 @@ def verify_captcha(token, ip):
     
 def check_ip_activity(ip):
     """Check if IP is posting too frequently"""
-    conn = sqlite3.connect('reviews.db')
+    conn = get_db_connection()
     c = conn.cursor()
+
+    # Submissions in last hour
+    c.execute("""SELECT COUNT(*) AS recent_count FROM ip_activity 
+                 WHERE ip = %s AND timestamp > NOW() - INTERVAL '1 hour'""", (ip,))
+    count = c.fetchone()['recent_count']
+
+    # Distinct days active
+    c.execute("""SELECT COUNT(DISTINCT TO_CHAR(timestamp, 'YYYY-MM-DD')) AS active_days 
+                 FROM ip_activity WHERE ip = %s""", (ip,))
+    days_active = c.fetchone()['active_days'] or 1
+
+    # Total submissions
+    c.execute("""SELECT COUNT(*) AS total_submissions FROM ip_activity WHERE ip = %s""", (ip,))
+    total = c.fetchone()['total_submissions']
     
-    # Get submissions in last hour
-    c.execute("""SELECT COUNT(*) FROM ip_activity 
-              WHERE ip = ? AND timestamp > datetime('now', '-1 hour')""", (ip,))
-    count = c.fetchone()[0]
-    
-    # Get all submissions from this IP
-    c.execute("""SELECT COUNT(DISTINCT strftime('%Y-%m-%d', timestamp)) 
-              FROM ip_activity WHERE ip = ?""", (ip,))
-    days_active = c.fetchone()[0] or 1
-    
-    # Calculate average per day
-    c.execute("""SELECT COUNT(*) FROM ip_activity WHERE ip = ?""", (ip,))
-    total = c.fetchone()[0]
     avg_per_day = total / days_active
-    
+
     conn.close()
-    
-    # Thresholds (adjust as needed)
-    if count > 5:  # More than 5 in 1 hour
+
+    # Thresholds
+    if count > 5:
         return True, "Excessive hourly submissions"
-    if avg_per_day > 3:  # More than 3 per day average
+    if avg_per_day > 3:
         return True, "Consistent daily spamming"
     return False, ""
+
 
 # --- API Endpoints ---
 
@@ -327,13 +338,15 @@ def submit_review():
     print(f"[Review Submission] IP: {ip}, User-Agent: {user_agent}")
 
     # Initialize database connection
-    conn = sqlite3.connect('reviews.db')
+    # conn = sqlite3.connect('reviews.db')
+    conn = get_db_connection()
+
     c = conn.cursor()
     
     # Log submission attempt
     c.execute("""INSERT INTO ip_activity 
               (ip, timestamp, user_agent, action) 
-              VALUES (?, ?, ?, ?)""",
+              VALUES (%s, %s, %s, %s)""",
               (ip, timestamp, user_agent, 'submission_attempt'))
     conn.commit()
 
@@ -364,7 +377,7 @@ def submit_review():
     if not verify_captcha(captcha_token, ip):
         c.execute("""INSERT INTO reviews 
                   (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                   (text, ip, user_agent, 'blocked', 'auto_rejected',
                    "Failed CAPTCHA verification", 0.9, timestamp, timestamp))
         conn.commit()
@@ -376,7 +389,7 @@ def submit_review():
     if is_ai:
         c.execute("""INSERT INTO reviews 
                   (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                   (text, ip, user_agent, ai_status, ai_review_status,
                    ai_reason, ai_conf, timestamp, timestamp))
         conn.commit()
@@ -402,7 +415,7 @@ def submit_review():
         # For paid reviews, we always quarantine for human review
         c.execute("""INSERT INTO reviews 
                   (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                   (text, ip, user_agent, 'quarantined', 'pending',
                    paid_reason, paid_conf, timestamp, timestamp))
         conn.commit()
@@ -419,11 +432,11 @@ def submit_review():
     if is_bot:
         # Insert into both tables
         c.execute("""INSERT INTO bot_detections VALUES 
-                  (NULL, ?, ?, ?, ?, ?, ?)""",
+                  (NULL, %s, %s, %s, %s, %s, %s)""",
                   (ip, user_agent, True, bot_conf, bot_reason, timestamp))
         c.execute("""INSERT INTO reviews 
                   (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                   (text, ip, user_agent, 'blocked', 'auto_rejected',
                    bot_reason, bot_conf, timestamp, timestamp))
         conn.commit()
@@ -437,7 +450,7 @@ def submit_review():
     # If all checks pass - approved review
     c.execute("""INSERT INTO reviews 
               (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
               (text, ip, user_agent, 'published', 'auto_approved',
                'Genuine review', 1.0, timestamp, timestamp))
     conn.commit()
@@ -450,28 +463,29 @@ def submit_review():
 
 @app.route('/get-quarantined')
 def get_quarantined():
-    """Get only reviews needing human review"""
-    conn = sqlite3.connect('reviews.db')
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute("""SELECT id, text, reason, confidence, timestamp 
-              FROM reviews 
-              WHERE status = 'quarantined' AND review_status = 'pending'
-              ORDER BY timestamp DESC""")
-    results = [dict(zip(['id', 'text', 'reason', 'confidence', 'timestamp'], row)) 
-              for row in c.fetchall()]
+                 FROM reviews 
+                 WHERE status = 'quarantined' AND review_status = 'pending'
+                 ORDER BY timestamp DESC""")
+    results = c.fetchall()
     conn.close()
     return jsonify(results)
+
 
 @app.route('/approve-review/<int:review_id>', methods=['POST'])
 def approve_review(review_id):
     """Approve a quarantined review"""
-    conn = sqlite3.connect('reviews.db')
+    # conn = sqlite3.connect('reviews.db')
+    conn = get_db_connection()
+
     c = conn.cursor()
     c.execute("""UPDATE reviews 
               SET status = 'published', 
                   review_status = 'approved',
-                  last_updated = ?
-              WHERE id = ?""", (datetime.now(), review_id))
+                  last_updated = %s
+              WHERE id = %s""", (datetime.now(), review_id))
     conn.commit()
     conn.close()
     return jsonify({'status': 'success'})
@@ -479,13 +493,15 @@ def approve_review(review_id):
 @app.route('/reject-review/<int:review_id>', methods=['POST'])
 def reject_review(review_id):
     """Reject a quarantined review"""
-    conn = sqlite3.connect('reviews.db')
+    # conn = sqlite3.connect('reviews.db')
+    conn = get_db_connection()
+
     c = conn.cursor()
     c.execute("""UPDATE reviews 
               SET status = 'blocked', 
                   review_status = 'rejected',
-                  last_updated = ?
-              WHERE id = ?""", (datetime.now(), review_id))
+                  last_updated = %s
+              WHERE id = %s""", (datetime.now(), review_id))
     conn.commit()
     conn.close()
     return jsonify({'status': 'success'})
@@ -514,20 +530,20 @@ def reject_review(review_id):
 
 @app.route('/bot-analytics')
 def bot_analytics():
-    conn = sqlite3.connect('reviews.db')
+    conn = get_db_connection()
     c = conn.cursor()
-    
-    c.execute("SELECT COUNT(*) FROM bot_detections WHERE is_bot = 1")
-    total_bots = c.fetchone()[0]
-    
-    c.execute("SELECT COUNT(DISTINCT ip) FROM bot_detections")
-    unique_ips = c.fetchone()[0]
-    
-    c.execute("SELECT details, COUNT(*) FROM bot_detections GROUP BY details")  # Changed to 'details'
-    detection_types = dict(c.fetchall())
-    
+
+    c.execute("SELECT COUNT(*) AS total_bots FROM bot_detections WHERE is_bot = TRUE")
+    total_bots = c.fetchone()['total_bots']
+
+    c.execute("SELECT COUNT(DISTINCT ip) AS unique_ips FROM bot_detections")
+    unique_ips = c.fetchone()['unique_ips']
+
+    c.execute("SELECT details, COUNT(*) FROM bot_detections GROUP BY details")
+    detection_types = {row['details']: row['count'] for row in c.fetchall()}
+
     conn.close()
-    
+
     return jsonify({
         'total_bots_blocked': total_bots,
         'unique_bot_ips': unique_ips,
@@ -536,9 +552,9 @@ def bot_analytics():
 
 @app.route('/stats')
 def stats():
-    conn = sqlite3.connect('reviews.db')
+    conn = get_db_connection()
     c = conn.cursor()
-    
+
     # Status distribution
     c.execute("""
         SELECT 
@@ -548,38 +564,34 @@ def stats():
             COUNT(*) as total
         FROM reviews
     """)
-    status_counts = dict(zip(['approved', 'quarantined', 'blocked', 'total'], c.fetchone()))
-    
-    # Rejection reasons breakdown
+    status_counts = c.fetchone()
+
+    # Rejection reasons
     c.execute("""
         SELECT 
-            SUM(CASE WHEN reason LIKE '%AI%' THEN 1 ELSE 0 END) as ai_rejections,
-            SUM(CASE WHEN reason LIKE '%Paid%' THEN 1 ELSE 0 END) as paid_rejections,
-            SUM(CASE WHEN reason LIKE '%Bot%' THEN 1 ELSE 0 END) as bot_rejections,
-            SUM(CASE WHEN reason LIKE '%CAPTCHA%' THEN 1 ELSE 0 END) as captcha_rejections,
-            SUM(CASE WHEN reason LIKE '%Suspicious activity%' THEN 1 ELSE 0 END) as activity_rejections
+            SUM(CASE WHEN reason ILIKE '%AI%' THEN 1 ELSE 0 END) as ai_rejections,
+            SUM(CASE WHEN reason ILIKE '%Paid%' THEN 1 ELSE 0 END) as paid_rejections,
+            SUM(CASE WHEN reason ILIKE '%Bot%' THEN 1 ELSE 0 END) as bot_rejections,
+            SUM(CASE WHEN reason ILIKE '%CAPTCHA%' THEN 1 ELSE 0 END) as captcha_rejections,
+            SUM(CASE WHEN reason ILIKE '%Suspicious activity%' THEN 1 ELSE 0 END) as activity_rejections
         FROM reviews 
         WHERE status != 'published'
     """)
-    rejection_reasons = dict(zip(
-        ['ai_rejections', 'paid_rejections', 'bot_rejections', 'captcha_rejections', 'activity_rejections'],
-        c.fetchone()
-    ))
-    
+    rejection_reasons = c.fetchone()
+
     # Daily activity
     c.execute("""
         SELECT 
-            strftime('%Y-%m-%d', timestamp) as day,
+            TO_CHAR(timestamp, 'YYYY-MM-DD') as day,
             SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) as approved,
             SUM(CASE WHEN status = 'quarantined' THEN 1 ELSE 0 END) as quarantined,
             SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) as blocked
         FROM reviews
-        WHERE timestamp > date('now', '-7 days')
+        WHERE timestamp > NOW() - INTERVAL '7 days'
         GROUP BY day
         ORDER BY day
     """)
-    daily_activity = [dict(zip(['day', 'approved', 'quarantined', 'blocked'], row)) 
-                     for row in c.fetchall()]
+    daily_activity = c.fetchall()
     
     conn.close()
     
@@ -588,6 +600,7 @@ def stats():
         'rejection_reasons': rejection_reasons,
         'daily_activity': daily_activity
     })
+
 
 @app.route('/dashboard-data')
 def dashboard_data():
