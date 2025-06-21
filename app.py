@@ -44,6 +44,13 @@ def init_db():
                  details TEXT,
                  timestamp DATETIME)''')
     
+    c.execute('''CREATE TABLE IF NOT EXISTS ip_activity
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 ip TEXT NOT NULL,
+                 timestamp DATETIME NOT NULL,
+                 user_agent TEXT,
+                 action TEXT)''')
+    
     conn.commit()
     conn.close()
 
@@ -91,8 +98,11 @@ def detect_ai_content(text):
         # Initialize the model
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        prompt = f"""Analyze this text and determine if it was AI-generated. 
-        Respond ONLY with 'AI' or 'Human':
+        prompt = f"""Analyze this text and determine if it was likely AI-generated. Consider:
+1. Overly formal or generic language
+2. Mentions of AI systems
+3. Unnatural phrasing
+4. Lack of personal experience details
         Text: \"\"\"{text[:1000]}\"\"\""""
         
         response = model.generate_content(
@@ -250,17 +260,93 @@ def detect_paid_review(text):
     
     return False, 0.0, ""
 
+def get_client_ip():
+    """Get real client IP address, even behind proxy."""
+    if request.headers.get('X-Forwarded-For'):
+        # Handle cases where app is behind a proxy
+        ip = request.headers.get('X-Forwarded-For').split(',')[0].strip()
+    else:
+        ip = request.remote_addr
+    return ip
+
+def verify_captcha(token, ip):
+    url = "https://www.google.com/recaptcha/api/siteverify"
+    payload = {
+        'secret': os.getenv("RECAPTCHA_SECRET_KEY"),  # or hardcode for testing
+        'response': token,
+        'remoteip': ip
+    }
+    try:
+        response = requests.post(url, data=payload, timeout=5)
+        result = response.json()
+        return result.get("success", False)
+    except Exception as e:
+        print("CAPTCHA Verification Error:", e)
+        return False
+    
+def check_ip_activity(ip):
+    """Check if IP is posting too frequently"""
+    conn = sqlite3.connect('reviews.db')
+    c = conn.cursor()
+    
+    # Get submissions in last hour
+    c.execute("""SELECT COUNT(*) FROM ip_activity 
+              WHERE ip = ? AND timestamp > datetime('now', '-1 hour')""", (ip,))
+    count = c.fetchone()[0]
+    
+    # Get all submissions from this IP
+    c.execute("""SELECT COUNT(DISTINCT strftime('%Y-%m-%d', timestamp)) 
+              FROM ip_activity WHERE ip = ?""", (ip,))
+    days_active = c.fetchone()[0] or 1
+    
+    # Calculate average per day
+    c.execute("""SELECT COUNT(*) FROM ip_activity WHERE ip = ?""", (ip,))
+    total = c.fetchone()[0]
+    avg_per_day = total / days_active
+    
+    conn.close()
+    
+    # Thresholds (adjust as needed)
+    if count > 5:  # More than 5 in 1 hour
+        return True, "Excessive hourly submissions"
+    if avg_per_day > 3:  # More than 3 per day average
+        return True, "Consistent daily spamming"
+    return False, ""
+
 # --- API Endpoints ---
 
 @app.route('/submit-review', methods=['POST'])
 def submit_review():
     data = request.json
     text = data.get('text', '').strip()
-    ip = request.remote_addr or "127.0.0.1"
+    captcha_token = data.get('captcha', '')
+    ip = get_client_ip()
     user_agent = request.headers.get('User-Agent', '')
+    print(f"[Review Submission] IP: {ip}, User-Agent: {user_agent}")
+
+    conn = sqlite3.connect('reviews.db')
+    c = conn.cursor()
+    c.execute("""INSERT INTO ip_activity 
+              (ip, timestamp, user_agent, action) 
+              VALUES (?, ?, ?, ?)""",
+              (ip, datetime.now(), user_agent, 'submission_attempt'))
+    conn.commit()
+    conn.close()
+    
+    # Check IP patterns
+    is_suspicious, reason = check_ip_activity(ip)
+    if is_suspicious:
+        return jsonify({
+            'status': 'blocked',
+            'reason': f"Suspicious posting pattern: {reason}",
+            'confidence': 0.95
+        }), 403
 
     if not text:
         return jsonify({'status': 'error', 'message': 'Review text required'}), 400
+    
+    if not verify_captcha(captcha_token, ip):
+        return jsonify({'status': 'error', 'message': 'CAPTCHA verification failed'}), 400
 
     conn = sqlite3.connect('reviews.db')
     c = conn.cursor()
