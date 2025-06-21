@@ -1,0 +1,7 @@
+Flask
+python-dotenv
+requests
+transformers
+torch
+flask_cors
+google-generativeai

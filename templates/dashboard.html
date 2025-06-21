@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Truvo - Moderator Dashboard</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Moderation Dashboard</h1>
+        <div class="nav">
+            <a href="/">Submit Review</a>
+        </div>
+        
+        <div class="dashboard-grid">
+            <!-- Stats Overview -->
+            <div class="card">
+                <h2>Detection Statistics</h2>
+                <div id="statsChart" class="chart"></div>
+            </div>
+            
+            <!-- Bot Analytics -->
+            <div class="card">
+                <h2>Bot Activity</h2>
+                <div id="botChart" class="chart"></div>
+            </div>
+            
+            <!-- Quarantined Reviews -->
+            <div class="card full-width">
+                <h2>Quarantined Reviews</h2>
+                <div class="filters">
+                    <button onclick="filterReviews('all')">All</button>
+                    <button onclick="filterReviews('ai')">AI Content</button>
+                    <button onclick="filterReviews('paid')">Paid Reviews</button>
+                    <button onclick="filterReviews('bot')">Bot Activity</button>
+                </div>
+                
+                <table id="quarantineTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Review</th>
+                            <th>Reason</th>
+                            <th>Confidence</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
