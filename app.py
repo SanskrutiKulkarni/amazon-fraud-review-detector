@@ -104,7 +104,7 @@ genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
 def detect_ai_content(text):
     """Detect AI content and properly route to quarantine when uncertain"""
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         prompt = f"""Analyze this text for AI-generation indicators:
 1. Overly perfect grammar/syntax
@@ -362,7 +362,7 @@ def submit_review():
     if is_suspicious:
         c.execute("""INSERT INTO reviews 
                   (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                   (text, ip, user_agent, 'blocked', 'auto_rejected',
                    f"Suspicious activity: {reason}", 0.95, timestamp, timestamp))
         conn.commit()
