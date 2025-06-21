@@ -1,4 +1,4 @@
-# Truvo Review Moderation System
+# Truvo
 A comprehensive AI-powered review moderation system that automatically detects and filters suspicious reviews using multi-layered verification.
 
 ## Features
