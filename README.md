@@ -40,6 +40,9 @@ A comprehensive AI-powered review moderation system that automatically detects a
 - IPQualityScore API (Optional)
 
 ## Running
+
 **Command:**
-python app.py 
-**Run on port:** http://127.0.0.1:5000
+- python app.py 
+
+**Run on port:** 
+- http://127.0.0.1:5000
