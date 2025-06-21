@@ -345,20 +345,20 @@ def submit_review():
         return jsonify({'status': 'error', 'message': 'Review text required'}), 400
 
     # Check 2: IP Activity Patterns
-    # is_suspicious, reason = check_ip_activity(ip)
-    # if is_suspicious:
-    #     c.execute("""INSERT INTO reviews 
-    #               (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
-    #               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-    #               (text, ip, user_agent, 'blocked', 'auto_rejected',
-    #                f"Suspicious activity: {reason}", 0.95, timestamp, timestamp))
-    #     conn.commit()
-    #     conn.close()
-    #     return jsonify({
-    #         'status': 'blocked',
-    #         'reason': f"Suspicious posting pattern: {reason}",
-    #         'confidence': 0.95
-    #     }), 403
+    is_suspicious, reason = check_ip_activity(ip)
+    if is_suspicious:
+        c.execute("""INSERT INTO reviews 
+                  (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (text, ip, user_agent, 'blocked', 'auto_rejected',
+                   f"Suspicious activity: {reason}", 0.95, timestamp, timestamp))
+        conn.commit()
+        conn.close()
+        return jsonify({
+            'status': 'blocked',
+            'reason': f"Suspicious posting pattern: {reason}",
+            'confidence': 0.95
+        }), 403
 
     # Check 3: CAPTCHA Verification
     if not verify_captcha(captcha_token, ip):
