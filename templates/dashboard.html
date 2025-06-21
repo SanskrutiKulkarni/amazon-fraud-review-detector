@@ -3,54 +3,102 @@
 <head>
     <title>Truvo - Moderator Dashboard</title>
     <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="container">
-        <h1>Moderation Dashboard</h1>
-        <div class="nav">
-            <a href="/">Submit Review</a>
-        </div>
+        <header>
+            <h1>Review Moderation Dashboard</h1>
+            <div class="header-actions">
+                <a href="/" class="btn-primary">Submit Review</a>
+                <button id="refreshBtn" class="btn-secondary">Refresh Data</button>
+            </div>
+        </header>
         
         <div class="dashboard-grid">
-            <!-- Stats Overview -->
-            <div class="card">
-                <h2>Detection Statistics</h2>
-                <div id="statsChart" class="chart"></div>
+            <!-- Stats Cards -->
+            <div class="stat-card">
+                <div class="stat-value" id="totalReviews">0</div>
+                <div class="stat-label">Total Reviews</div>
             </div>
             
-            <!-- Bot Analytics -->
-            <div class="card">
+            <div class="stat-card">
+                <div class="stat-value" id="approvedReviews">0</div>
+                <div class="stat-label">Approved</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-value" id="quarantinedReviews">0</div>
+                <div class="stat-label">Quarantined</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-value" id="blockedReviews">0</div>
+                <div class="stat-label">Blocked</div>
+            </div>
+            
+            <!-- Main Charts -->
+            <div class="chart-card">
+                <h2>Review Status Distribution</h2>
+                <div class="chart-container">
+                    <canvas id="statsChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="chart-card">
+                <h2>Rejection Reasons</h2>
+                <div class="chart-container">
+                    <canvas id="rejectionChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="chart-card full-width">
+                <h2>7-Day Activity</h2>
+                <div class="chart-container">
+                    <canvas id="dailyChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="chart-card">
                 <h2>Bot Activity</h2>
-                <div id="botChart" class="chart"></div>
+                <div class="chart-container">
+                    <canvas id="botChart"></canvas>
+                </div>
             </div>
             
             <!-- Quarantined Reviews -->
             <div class="card full-width">
-                <h2>Quarantined Reviews</h2>
-                <div class="filters">
-                    <button onclick="filterReviews('all')">All</button>
-                    <button onclick="filterReviews('ai')">AI Content</button>
-                    <button onclick="filterReviews('paid')">Paid Reviews</button>
-                    <button onclick="filterReviews('bot')">Bot Activity</button>
+                <div class="card-header">
+                    <h2>Quarantined Reviews</h2>
+                    <div class="filters">
+                        <button class="filter-btn active" onclick="filterReviews('all')">All</button>
+                        <button class="filter-btn" onclick="filterReviews('ai')">AI Content</button>
+                        <button class="filter-btn" onclick="filterReviews('paid')">Paid Reviews</button>
+                        <button class="filter-btn" onclick="filterReviews('bot')">Bot Activity</button>
+                    </div>
                 </div>
                 
-                <table id="quarantineTable">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Review</th>
-                            <th>Reason</th>
-                            <th>Confidence</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                </table>
+                <div class="table-container">
+                    <table id="quarantineTable">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Review</th>
+                                <th>Reason</th>
+                                <th>Confidence</th>
+                                <th>Date</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/moment"></script>
     <script src="/static/js/dashboard.js"></script>
 </body>
 </html>

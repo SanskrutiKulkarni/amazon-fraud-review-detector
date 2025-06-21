@@ -12,11 +12,11 @@
             <a href="/dashboard">Moderator Dashboard</a>
         </div>
         
-<textarea id="reviewText" placeholder="Write your honest review..."></textarea>
-
-<div class="g-recaptcha" data-sitekey="6LdSjGgrAAAAAEutsGN2Gd8KLw_aMbIKZavdms3_"></div>
-
-<button onclick="submitReview()">Submit Review</button>
+<div class="form-container">  <!-- Add this wrapper div -->
+        <textarea id="reviewText" placeholder="Write your honest review..."></textarea>
+        <div class="g-recaptcha" data-sitekey="6LdSjGgrAAAAAEutsGN2Gd8KLw_aMbIKZavdms3_"></div>
+        <button onclick="submitReview()">Submit Review</button>
+    </div>
 
         
         <div id="result"></div>

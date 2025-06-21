@@ -93,47 +93,46 @@ init_db()
 genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
 
 def detect_ai_content(text):
-    """Detect if content is AI-generated using Gemini"""
+    """Detect AI content and properly route to quarantine when uncertain"""
     try:
-        # Initialize the model
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        prompt = f"""Analyze this text and determine if it was likely AI-generated. Consider:
-1. Overly formal or generic language
-2. Mentions of AI systems
-3. Unnatural phrasing
-4. Lack of personal experience details
-        Text: \"\"\"{text[:1000]}\"\"\""""
+        prompt = f"""Analyze this text for AI-generation indicators:
+1. Overly perfect grammar/syntax
+2. Generic/impersonal tone
+3. Lack of specific details
+4. Known AI phrases
+
+Respond ONLY with:
+- 'AI' for definite AI content
+- 'QUARANTINE' for suspicious but uncertain
+- 'HUMAN' for definite human content
+
+Text: \"\"\"{text[:2000]}\"\"\""""
         
         response = model.generate_content(
             prompt,
             generation_config=GenerationConfig(
-                temperature=0.0,  # For deterministic responses
-                max_output_tokens=1  # We only need one word
+                temperature=0.1,
+                max_output_tokens=1
             )
         )
         
         decision = response.text.strip().upper()
         
         if decision == 'AI':
-            return True, 0.9, "AI-generated (Gemini Detection)"
-        elif decision == 'UNCERTAIN':  # If you want to handle uncertain cases
-            return True, 0.6, "Possibly AI-generated (Gemini)"
+            return True, 0.9, "Definite AI-generated content", 'blocked', 'auto_rejected'
+        elif decision == 'QUARANTINE':
+            return True, 0.65, "Suspected AI content - needs human review", 'quarantined', 'pending'
         else:
-            return False, 0.1, "Human-written"
+            return False, 0.1, "Human-written content", 'published', 'auto_approved'
             
     except Exception as e:
-        print(f"Gemini Detection Error: {e}")
-        # Fallback to pattern matching
-        ai_patterns = [
-            r"\bas an ai\b", r"\blanguage model\b", 
-            r"\bartificial intelligence\b", r"\baccording to my (knowledge|training data)\b",
-            r"\bas a (large )?language model\b", r"\bopenai\b", r"\bchatgpt\b"
-        ]
-        for pattern in ai_patterns:
-            if re.search(pattern, text, re.IGNORECASE):
-                return True, 0.85, f"AI-generated (pattern: {pattern})"
-        return False, 0.0, "Human-written (fallback)"
+        print(f"AI Detection Error: {str(e)}")
+        # Fallback checks
+        if len(text) > 300 and len(set(text.split())) < len(text.split())/3:
+            return True, 0.7, "Possible AI (repetitive content)", 'quarantined', 'pending'
+        return False, 0.2, "Human (fallback check)", 'published', 'auto_approved'
 
 # def detect_bot(ip, user_agent=""):
 #     """Advanced bot detection using IPQualityScore + behavioral analysis"""
@@ -317,115 +316,137 @@ def check_ip_activity(ip):
 
 @app.route('/submit-review', methods=['POST'])
 def submit_review():
+    # Initial setup
     data = request.json
     text = data.get('text', '').strip()
     captcha_token = data.get('captcha', '')
     ip = get_client_ip()
     user_agent = request.headers.get('User-Agent', '')
+    timestamp = datetime.now()
+    
     print(f"[Review Submission] IP: {ip}, User-Agent: {user_agent}")
 
+    # Initialize database connection
     conn = sqlite3.connect('reviews.db')
     c = conn.cursor()
+    
+    # Log submission attempt
     c.execute("""INSERT INTO ip_activity 
               (ip, timestamp, user_agent, action) 
               VALUES (?, ?, ?, ?)""",
-              (ip, datetime.now(), user_agent, 'submission_attempt'))
+              (ip, timestamp, user_agent, 'submission_attempt'))
     conn.commit()
-    conn.close()
-    
-    # Check IP patterns
-    is_suspicious, reason = check_ip_activity(ip)
-    if is_suspicious:
-        return jsonify({
-            'status': 'blocked',
-            'reason': f"Suspicious posting pattern: {reason}",
-            'confidence': 0.95
-        }), 403
 
+    # --- Sequential Validation Checks ---
+
+    # Check 1: Basic Validation
     if not text:
+        conn.close()
         return jsonify({'status': 'error', 'message': 'Review text required'}), 400
-    
+
+    # Check 2: IP Activity Patterns
+    # is_suspicious, reason = check_ip_activity(ip)
+    # if is_suspicious:
+    #     c.execute("""INSERT INTO reviews 
+    #               (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
+    #               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+    #               (text, ip, user_agent, 'blocked', 'auto_rejected',
+    #                f"Suspicious activity: {reason}", 0.95, timestamp, timestamp))
+    #     conn.commit()
+    #     conn.close()
+    #     return jsonify({
+    #         'status': 'blocked',
+    #         'reason': f"Suspicious posting pattern: {reason}",
+    #         'confidence': 0.95
+    #     }), 403
+
+    # Check 3: CAPTCHA Verification
     if not verify_captcha(captcha_token, ip):
+        c.execute("""INSERT INTO reviews 
+                  (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (text, ip, user_agent, 'blocked', 'auto_rejected',
+                   "Failed CAPTCHA verification", 0.9, timestamp, timestamp))
+        conn.commit()
+        conn.close()
         return jsonify({'status': 'error', 'message': 'CAPTCHA verification failed'}), 400
 
-    conn = sqlite3.connect('reviews.db')
-    c = conn.cursor()
-
-    # Layer 1: AI Detection
-    is_ai, ai_conf, ai_reason = detect_ai_content(text)
+    # Check 4: AI Content Detection
+    is_ai, ai_conf, ai_reason, ai_status, ai_review_status = detect_ai_content(text)
     if is_ai:
-        try:
-            c.execute("""INSERT INTO reviews 
-                      (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                      (text, ip, user_agent, 'blocked', 'auto_rejected',
-                       ai_reason, ai_conf, datetime.now(), datetime.now()))
-            conn.commit()
+        c.execute("""INSERT INTO reviews 
+                  (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (text, ip, user_agent, ai_status, ai_review_status,
+                   ai_reason, ai_conf, timestamp, timestamp))
+        conn.commit()
+        conn.close()
+        
+        if ai_status == 'quarantined':
+            return jsonify({
+                'status': 'quarantined',
+                'reason': ai_reason,
+                'confidence': ai_conf,
+                'needs_review': True
+            })
+        else:
             return jsonify({
                 'status': 'blocked',
                 'reason': ai_reason,
-                'confidence': ai_conf,
-                'layer': 1
+                'confidence': ai_conf
             })
-        finally:
-            conn.close()
 
-    # Layer 2: Paid/Incentivized Detection
-    # is_paid, paid_conf, paid_reason = detect_paid_behavior(ip, text)
+    # Check 5: Paid/Incentivized Review Detection
     is_paid, paid_conf, paid_reason = detect_paid_review(text)
     if is_paid:
-        try:
-            c.execute("""INSERT INTO reviews VALUES 
-                      (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                      (text, ip, user_agent, 'quarantined', 'pending',
-                       paid_reason, paid_conf, datetime.now(), datetime.now()))
-            conn.commit()
-            return jsonify({
-                'status': 'quarantined',
-                'reason': paid_reason,
-                'confidence': paid_conf,
-                'layer': 2,
-                'needs_review': True
-            })
-        finally:
-            conn.close()
+        # For paid reviews, we always quarantine for human review
+        c.execute("""INSERT INTO reviews 
+                  (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (text, ip, user_agent, 'quarantined', 'pending',
+                   paid_reason, paid_conf, timestamp, timestamp))
+        conn.commit()
+        conn.close()
+        return jsonify({
+            'status': 'quarantined',
+            'reason': paid_reason,
+            'confidence': paid_conf,
+            'needs_review': True
+        })
 
-    # Layer 3: Bot Detection
+    # Check 6: Bot Detection
     is_bot, bot_conf, bot_reason = detect_bot(ip, user_agent)
     if is_bot:
-        try:
-            # Insert into both tables
-            c.execute("""INSERT INTO bot_detections VALUES 
-                      (NULL, ?, ?, ?, ?, ?, ?)""",
-                      (ip, user_agent, True, bot_conf, bot_reason, datetime.now()))
-            c.execute("""INSERT INTO reviews VALUES 
-                      (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                      (text, ip, user_agent, 'blocked', 'auto_rejected',
-                       bot_reason, bot_conf, datetime.now(), datetime.now()))
-            conn.commit()
-            return jsonify({
-                'status': 'blocked',
-                'reason': bot_reason,
-                'confidence': bot_conf,
-                'layer': 3
-            })
-        finally:
-            conn.close()
+        # Insert into both tables
+        c.execute("""INSERT INTO bot_detections VALUES 
+                  (NULL, ?, ?, ?, ?, ?, ?)""",
+                  (ip, user_agent, True, bot_conf, bot_reason, timestamp))
+        c.execute("""INSERT INTO reviews 
+                  (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (text, ip, user_agent, 'blocked', 'auto_rejected',
+                   bot_reason, bot_conf, timestamp, timestamp))
+        conn.commit()
+        conn.close()
+        return jsonify({
+            'status': 'blocked',
+            'reason': bot_reason,
+            'confidence': bot_conf
+        })
 
     # If all checks pass - approved review
-    try:
-        c.execute("""INSERT INTO reviews VALUES 
-                  (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                  (text, ip, user_agent, 'published', 'auto_approved',
-                   'Genuine review', 1.0, datetime.now(), datetime.now()))
-        conn.commit()
-        return jsonify({
-            'status': 'published',
-            'badge': 'verified'
-        })
-    finally:
-        conn.close()
-
+    c.execute("""INSERT INTO reviews 
+              (text, ip, user_agent, status, review_status, reason, confidence, timestamp, last_updated)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+              (text, ip, user_agent, 'published', 'auto_approved',
+               'Genuine review', 1.0, timestamp, timestamp))
+    conn.commit()
+    conn.close()
+    
+    return jsonify({
+        'status': 'published',
+        'badge': 'verified'
+    })
 
 @app.route('/get-quarantined')
 def get_quarantined():
@@ -518,17 +539,71 @@ def stats():
     conn = sqlite3.connect('reviews.db')
     c = conn.cursor()
     
-    c.execute("SELECT status, COUNT(*) FROM reviews GROUP BY status")
-    status_counts = dict(c.fetchall())
+    # Status distribution
+    c.execute("""
+        SELECT 
+            SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) as approved,
+            SUM(CASE WHEN status = 'quarantined' THEN 1 ELSE 0 END) as quarantined,
+            SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) as blocked,
+            COUNT(*) as total
+        FROM reviews
+    """)
+    status_counts = dict(zip(['approved', 'quarantined', 'blocked', 'total'], c.fetchone()))
     
-    c.execute("SELECT reason, COUNT(*) FROM reviews WHERE status != 'published' GROUP BY reason")
-    rejection_reasons = dict(c.fetchall())
+    # Rejection reasons breakdown
+    c.execute("""
+        SELECT 
+            SUM(CASE WHEN reason LIKE '%AI%' THEN 1 ELSE 0 END) as ai_rejections,
+            SUM(CASE WHEN reason LIKE '%Paid%' THEN 1 ELSE 0 END) as paid_rejections,
+            SUM(CASE WHEN reason LIKE '%Bot%' THEN 1 ELSE 0 END) as bot_rejections,
+            SUM(CASE WHEN reason LIKE '%CAPTCHA%' THEN 1 ELSE 0 END) as captcha_rejections,
+            SUM(CASE WHEN reason LIKE '%Suspicious activity%' THEN 1 ELSE 0 END) as activity_rejections
+        FROM reviews 
+        WHERE status != 'published'
+    """)
+    rejection_reasons = dict(zip(
+        ['ai_rejections', 'paid_rejections', 'bot_rejections', 'captcha_rejections', 'activity_rejections'],
+        c.fetchone()
+    ))
+    
+    # Daily activity
+    c.execute("""
+        SELECT 
+            strftime('%Y-%m-%d', timestamp) as day,
+            SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) as approved,
+            SUM(CASE WHEN status = 'quarantined' THEN 1 ELSE 0 END) as quarantined,
+            SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) as blocked
+        FROM reviews
+        WHERE timestamp > date('now', '-7 days')
+        GROUP BY day
+        ORDER BY day
+    """)
+    daily_activity = [dict(zip(['day', 'approved', 'quarantined', 'blocked'], row)) 
+                     for row in c.fetchall()]
     
     conn.close()
     
     return jsonify({
         'status_distribution': status_counts,
-        'rejection_reasons': rejection_reasons
+        'rejection_reasons': rejection_reasons,
+        'daily_activity': daily_activity
+    })
+
+@app.route('/dashboard-data')
+def dashboard_data():
+    # Get all stats in one request
+    stats_response = stats().get_json()
+    
+    # Add quarantined reviews
+    quarantined = get_quarantined().get_json()
+    
+    # Add bot analytics
+    bot_stats = bot_analytics().get_json()
+    
+    return jsonify({
+        'stats': stats_response,
+        'quarantined': quarantined,
+        'bot_stats': bot_stats
     })
 
 # Frontend Routes
