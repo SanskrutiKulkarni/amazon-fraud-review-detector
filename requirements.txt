@@ -5,3 +5,7 @@ transformers
 torch
 flask_cors
 google-generativeai
+psycopg2-binary
+flask-sqlalchemy
+flask-login
+werkzeug

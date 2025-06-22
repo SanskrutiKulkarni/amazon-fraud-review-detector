@@ -9,15 +9,16 @@
     <div class="container">
         <h1>Submit Product Review</h1>
         <div class="nav">
-            <a href="/dashboard">Moderator Dashboard</a>
+            <a href="/login" class="btn btn-primary">
+                Moderator Dashboard
+            </a>
         </div>
         
-<div class="form-container">  <!-- Add this wrapper div -->
-        <textarea id="reviewText" placeholder="Write your honest review..."></textarea>
-        <div class="g-recaptcha" data-sitekey="6LdSjGgrAAAAAEutsGN2Gd8KLw_aMbIKZavdms3_"></div>
-        <button onclick="submitReview()">Submit Review</button>
-    </div>
-
+        <div class="form-container">
+            <textarea id="reviewText" placeholder="Write your honest review..."></textarea>
+            <div class="g-recaptcha" data-sitekey="6LdSjGgrAAAAAEutsGN2Gd8KLw_aMbIKZavdms3_"></div>
+            <button onclick="submitReview()">Submit Review</button>
+        </div>
         
         <div id="result"></div>
     </div>
