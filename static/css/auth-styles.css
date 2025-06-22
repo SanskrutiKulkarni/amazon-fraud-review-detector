@@ -1,0 +1,81 @@
+.auth-page {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f5f5f5;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+}
+
+.auth-card {
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    padding: 40px;
+    width: 350px;
+    text-align: center;
+}
+
+.auth-title {
+    color: #333;
+    margin-bottom: 24px;
+    font-size: 28px;
+}
+
+.auth-message {
+    color: #e74c3c;
+    margin-bottom: 20px;
+    font-size: 14px;
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.auth-input {
+    padding: 12px 15px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    transition: border 0.3s;
+}
+
+.auth-input:focus {
+    border-color: #3498db;
+    outline: none;
+}
+
+.auth-btn {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    padding: 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 500;
+    transition: background-color 0.3s;
+}
+
+.auth-btn:hover {
+    background-color: #2980b9;
+}
+
+.auth-link {
+    margin-top: 20px;
+    font-size: 14px;
+    color: #666;
+}
+
+.auth-link a {
+    color: #3498db;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.auth-link a:hover {
+    text-decoration: underline;
+}
