@@ -194,59 +194,177 @@ genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
 #             return True, 0.7, "Possible AI (repetitive content)", 'quarantined', 'pending'
 #         return False, 0.2, "Human (fallback check)", 'published', 'auto_approved'
 
-def detect_ai_content(text):
-    """Robust AI content detection with proper error handling"""
-    try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
+# def detect_ai_content(text):
+#     """Robust AI content detection with proper error handling"""
+#     try:
+#         model = genai.GenerativeModel('gemini-2.5-flash')
         
-        # Simplified but effective prompt
-        prompt = f"""Analyze this text for AI-generated content. Respond ONLY with:
-- 'AI' if definitely AI-generated
-- 'HUMAN' if definitely human-written
-- 'UNSURE' if uncertain
+#         # Simplified but effective prompt
+#         prompt = f"""Analyze this text for AI-generated content. Respond ONLY with:
+# - 'AI' if definitely AI-generated
+# - 'HUMAN' if definitely human-written
+# - 'UNSURE' if uncertain
+
+# Text: \"\"\"{text[:2000]}\"\"\""""
+        
+#         response = model.generate_content(
+#             prompt,
+#             generation_config=GenerationConfig(
+#                 temperature=0.1,
+#                 max_output_tokens=10
+#             )
+#         )
+        
+#         # Robust response parsing
+#         if response.candidates and response.candidates[0].content.parts:
+#             decision = response.text.strip().upper()
+            
+#             if decision == 'AI':
+#                 return True, 0.9, "AI-generated (Gemini detection)", 'blocked', 'auto_rejected'
+#             elif decision == 'UNSURE':
+#                 return True, 0.6, "Potential AI content (needs review)", 'quarantined', 'pending'
+        
+#         # Default to human if no clear AI detection
+#         return False, 0.2, "Human-written (Gemini detection)", 'published', 'auto_approved'
+        
+#     except Exception as e:
+#         print(f"AI Detection Error: {str(e)}")
+#         # Comprehensive fallback checks
+#         ai_patterns = [
+#             r"\bas (an )?ai\b",
+#             r"\blanguage model\b",
+#             r"\bgenerated (by|with)\b",
+#             r"\baccording to my (knowledge|training data)\b"
+#         ]
+        
+#         # Check for AI patterns
+#         for pattern in ai_patterns:
+#             if re.search(pattern, text, re.IGNORECASE):
+#                 return True, 0.85, f"AI-generated (pattern: {pattern})", 'blocked', 'auto_rejected'
+        
+#         # Check for suspiciously perfect text
+#         if len(text) > 150 and len(re.findall(r'\b\w{8,}\b', text)) > len(text.split())/3:
+#             return True, 0.7, "Overly complex vocabulary", 'quarantined', 'pending'
+            
+#         return False, 0.3, "Human (fallback check)", 'published', 'auto_approved'
+
+def detect_ai_content(text):
+    """
+    Robust AI detection using:
+    1. Gemini 1.5 Pro (primary)
+    2. Advanced regex patterns (fallback)
+    3. Behavioral analysis (generic/unpersonalized text)
+    4. Hugging Face API (secondary verification)
+    """
+    # Skip empty/short text (likely spam)
+    if len(text.strip()) < 25:
+        return False, 0.1, "Too short to analyze", 'published', 'auto_approved'
+
+    # --- Phase 1: Gemini Detection (Primary) ---
+    try:
+        model = genai.GenerativeModel('gemini-1.5-pro')
+        prompt = f"""Analyze this text for AI-generated content. Strictly respond in JSON format:
+{{
+  "decision": "AI",  // "AI", "HUMAN", or "UNSURE"
+  "reason": "Brief explanation",
+  "confidence": 0.0-1.0
+}}
+Consider these indicators:
+1. Overly perfect grammar/formality
+2. Generic praise without personal experiences
+3. Phrases like "as an AI" or "according to my knowledge"
+4. Unnatural structure (e.g., excessive transitions)
 
 Text: \"\"\"{text[:2000]}\"\"\""""
-        
+
         response = model.generate_content(
             prompt,
             generation_config=GenerationConfig(
                 temperature=0.1,
-                max_output_tokens=10
+                max_output_tokens=300
             )
         )
-        
-        # Robust response parsing
-        if response.candidates and response.candidates[0].content.parts:
-            decision = response.text.strip().upper()
-            
-            if decision == 'AI':
-                return True, 0.9, "AI-generated (Gemini detection)", 'blocked', 'auto_rejected'
-            elif decision == 'UNSURE':
-                return True, 0.6, "Potential AI content (needs review)", 'quarantined', 'pending'
-        
-        # Default to human if no clear AI detection
-        return False, 0.2, "Human-written (Gemini detection)", 'published', 'auto_approved'
-        
+
+        # Parse JSON response
+        if response.text:
+            try:
+                result = json.loads(response.text.strip("```json\n").rstrip("```").strip())
+                decision = result["decision"].upper()
+                reason = result.get("reason", "AI indicators detected")
+                confidence = float(result.get("confidence", 0.85))
+
+                if decision == "AI":
+                    return True, confidence, reason, 'blocked', 'auto_rejected'
+                elif decision == "UNSURE":
+                    return True, max(0.5, confidence), reason, 'quarantined', 'pending'
+            except (json.JSONDecodeError, KeyError):
+                pass  # Fall through to other checks
+
     except Exception as e:
-        print(f"AI Detection Error: {str(e)}")
-        # Comprehensive fallback checks
-        ai_patterns = [
-            r"\bas (an )?ai\b",
-            r"\blanguage model\b",
-            r"\bgenerated (by|with)\b",
-            r"\baccording to my (knowledge|training data)\b"
-        ]
+        print(f"Gemini Error: {e}")
+
+    # --- Phase 2: Regex Patterns (Fast Fallback) ---
+    ai_patterns = [
+        # Explicit AI disclosures
+        r"\b(as|being) (an? )?(ai|language model|llm|chatbot)\b",
+        r"\b(generated|created|written) (by|with|using) (ai|chatgpt|gpt|gemini|llm)\b",
+        r"\baccording to (my )?(training data|knowledge base|algorithm|parameters)\b",
         
-        # Check for AI patterns
-        for pattern in ai_patterns:
-            if re.search(pattern, text, re.IGNORECASE):
-                return True, 0.85, f"AI-generated (pattern: {pattern})", 'blocked', 'auto_rejected'
+        # Generic/impersonal phrasing
+        r"\b(this )?(product|item) (is )?(absolutely )?(perfect|flawless|exceptional|superb)\b",
+        r"\b(highly|strongly) recommend(ed|ing)? (this|it|product)\b",
+        r"\b(exceed|surpass)(ed|es)? (all|my)? expectations?\b",
+        r"\b(in )?my (opinion|view|perspective|analysis)(,)? (this|it)\b",
         
-        # Check for suspiciously perfect text
-        if len(text) > 150 and len(re.findall(r'\b\w{8,}\b', text)) > len(text.split())/3:
-            return True, 0.7, "Overly complex vocabulary", 'quarantined', 'pending'
+        # Unnatural transitions
+        r"\b(furthermore|moreover|additionally|in conclusion)\b",
+        
+        # Lack of personal experience
+        r"\b(i (have )?(never|not) (used|tried|experienced) (this|it)\b"
+    ]
+
+    for pattern in ai_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            return True, 0.9, f"AI pattern: '{pattern[:30]}...'", 'blocked', 'auto_rejected'
+
+    # --- Phase 3: Behavioral Analysis ---
+    words = text.lower().split()
+    word_count = len(words)
+    unique_words = len(set(words))
+    
+    # Check for low lexical diversity
+    if word_count > 80 and (unique_words / word_count) < 0.5:
+        return True, 0.75, "Low lexical diversity", 'quarantined', 'pending'
+        
+    # Check for lack of personal pronouns
+    personal_pronouns = len(re.findall(r"\b(i|me|my|mine)\b", text.lower()))
+    if word_count > 50 and personal_pronouns < 2:
+        return True, 0.7, "Lacks personal references", 'quarantined', 'pending'
+
+    # --- Phase 4: Hugging Face API (Backup) ---
+    if os.getenv('HF_API_KEY'):
+        try:
+            API_URL = "https://api-inference.huggingface.co/models/Hello-SimpleAI/chatgpt-detector-roberta"
+            headers = {"Authorization": f"Bearer {os.getenv('HF_API_KEY')}"}
+            response = requests.post(
+                API_URL, 
+                headers=headers, 
+                json={"inputs": text[:1000]}, 
+                timeout=5
+            )
             
-        return False, 0.3, "Human (fallback check)", 'published', 'auto_approved'
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, list) and data[0][0]["label"] == "AI":
+                    confidence = data[0][0]["score"]
+                    if confidence > 0.85:
+                        return True, confidence, "AI (Hugging Face)", 'blocked', 'auto_rejected'
+        except Exception as e:
+            print(f"Hugging Face Error: {e}")
+
+    # --- Final Decision ---
+    return False, 0.2, "Likely human", 'published', 'auto_approved'
+
     
 # def detect_ai_content(text):
 #     """Detect AI content and properly route to quarantine when uncertain"""
