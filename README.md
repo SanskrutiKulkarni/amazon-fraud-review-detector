@@ -1,7 +1,5 @@
 # Truvo - AI-Powered Review Moderation System
 
-![Truvo Logo](https://via.placeholder.com/150x50?text=Truvo) *(Add your actual logo here)*
-
 A comprehensive AI-powered review moderation system that automatically detects and filters suspicious reviews using multi-layered verification.
 
 ## Features
@@ -95,9 +93,6 @@ Endpoint	Method	Description
 **Database Schema**
 Main Tables:
 - reviews - Stores all review submissions and moderation status
-
 - bot_detections - Tracks identified bot activity
-
 - ip_activity - Logs IP address actions
-
 - users - Administrator accounts
